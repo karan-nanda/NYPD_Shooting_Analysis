@@ -1,0 +1,110 @@
+---
+title: "NYPD Shooting Data"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+date: "2025-06-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(ggplot2)
+library(reshape2)
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+df <- read_csv("NYPD_Shooting_Incident_Data__Historic_.csv")
+df <- df %>%
+  mutate(
+    OCCUR_DATETIME = mdy_hms(paste(OCCUR_DATE, OCCUR_TIME)),
+    YEAR = year(OCCUR_DATETIME),
+    X_COORD_CD = as.numeric(X_COORD_CD),
+    Y_COORD_CD = as.numeric(Y_COORD_CD)
+  )
+```
+
+##Visualization: Shooting Incidents Over Time by Borough
+
+```{r}
+borough_yearly <- df %>%
+  filter(!is.na(BORO)) %>%
+  group_by(YEAR, BORO) %>%
+  summarise(Incidents = n(), .groups = "drop")
+
+ggplot(borough_yearly, aes(x = YEAR, y = Incidents, color = BORO)) +
+  geom_line(size = 1.1) +
+  geom_point() +
+  labs(title = "Shooting Incidents Over Time by Borough", x = "Year", y = "Number of Incidents") +
+  theme_minimal()
+```
+
+##Visualization: Shootings by Hour of Day
+
+```{r, fig.width=8, fig.height=5}
+df %>%
+  mutate(HOUR = hour(OCCUR_DATETIME)) %>%
+  count(HOUR) %>%
+  ggplot(aes(x = HOUR, y = n)) +
+  geom_col(fill = "#2c7fb8") +
+  labs(title = "Shooting Incidents by Hour of Day",
+       x = "Hour of Day (24h format)", y = "Number of Incidents") +
+  theme_minimal() +
+  scale_x_continuous(breaks = 0:23)
+```
+
+## Modeling: Predicting Statistical Murders
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE, results='asis'}
+library(caret)
+
+# Filter and prepare data
+model_data <- df %>%
+  filter(
+    !is.na(PERP_AGE_GROUP), PERP_AGE_GROUP != "(null)",
+    !is.na(PERP_RACE), PERP_RACE != "(null)",
+    !is.na(PERP_SEX), PERP_SEX != "(null)",
+    !is.na(BORO), !is.na(LOCATION_DESC),
+    !is.na(STATISTICAL_MURDER_FLAG)
+  ) %>%
+  select(STATISTICAL_MURDER_FLAG, PERP_AGE_GROUP, PERP_SEX, PERP_RACE,
+         VIC_AGE_GROUP, VIC_SEX, VIC_RACE, BORO, LOCATION_DESC) %>%
+  mutate(across(everything(), as.factor))
+
+# Split into training and test
+set.seed(123)
+train_index <- createDataPartition(model_data$STATISTICAL_MURDER_FLAG, p = 0.8, list = FALSE)
+train_data <- model_data[train_index, ]
+test_data  <- model_data[-train_index, ]
+
+# Train random forest model (safe mtry range)
+model <- train(
+  STATISTICAL_MURDER_FLAG ~ ., 
+  data = train_data,
+  method = "rf",
+  tuneLength = 3,
+  trControl = trainControl(method = "cv", number = 3)
+)
+
+# Predict
+pred <- predict(model, newdata = test_data)
+
+# Evaluate
+cm <- confusionMatrix(pred, test_data$STATISTICAL_MURDER_FLAG)
+cat("```\n", paste(capture.output(cm), collapse = "\n"), "\n```")
+```
+
+```markdown
+## Bias Discussion
+
+**Potential Biases:**
+
+- **Missing Perpetrator Data**: Many entries lack `PERP_RACE`, `PERP_AGE_GROUP`, and `PERP_SEX`, possibly due to unresolved investigations or unreported suspects.
+
+- **Reporting Bias**: Some boroughs have heavier police presence (e.g., Bronx, Brooklyn), which may inflate incident counts compared to under-policed areas.
+
+- **Racial Bias**: Discrepancies between victim and perpetrator race may reflect systemic inequities in crime reporting or enforcement.
