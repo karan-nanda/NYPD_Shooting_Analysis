@@ -12,9 +12,6 @@ NYPD_Shooting_Analysis/
 ├── README.md # Project description and instructions
 └── LICENSE # MIT License
 
-markdown
-Copy
-Edit
 
 ## 📊 Overview of Analysis
 
